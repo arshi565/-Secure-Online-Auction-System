@@ -1,0 +1,13 @@
+import com.nbentayou.app.exception.InvalidBidException;
+import com.nbentayou.app.model.Bid;
+import com.nbentayou.app.model.Item;
+import com.nbentayou.app.model.User;
+import java.util.List;
+import java.util.Optional;
+import java.util.Set;
+public interface BidTracker {
+ void recordUserBidOnItem(Bid bid, Item item) throws InvalidBidException;
+ Optional<Bid> getCurrentWinningBidForItem(Item item);
+ List<Bid> getAllBidsForItem(Item item);
+ Set<Item> getAllItemsWithBidFromUser(User user);
+}
