@@ -1,0 +1,198 @@
+import com.nbentayou.app.exception.InvalidBidException;
+import com.nbentayou.app.model.Bid;
+import com.nbentayou.app.model.Item;
+import com.nbentayou.app.model.User;
+import org.junit.Before;
+import org.junit.Rule;
+import org.junit.Test;
+import org.junit.rules.ExpectedException;
+import java.util.*;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.stream.Collectors;
+import java.util.stream.IntStream;
+import static org.junit.Assert.*;
+public class BidTrackerImplTest {
+ private final User user1 = new User("u1", "Nicolas Bentayou");
+ private final User user2 = new User("u2", "Randolph Carter");
+ private final User user3 = new User("u3", "Herbert West");
+ private final Item item1 = new Item("i1", "item1", "Brilliant!");
+ private final Item item2 = new Item("i2", "item2", "Brilliant!");
+ private final Item item3 = new Item("i3", "item3", "Brilliant!");
+ private BidTrackerImpl bidTracker;
+ public final ExpectedException thrown = ExpectedException.none();
+ public void initAuctionRoom() {
+ bidTracker = new BidTrackerImpl();
+ }
+ public void recordUserBidOnItem_shouldAddAFirstBidToItem_whenBidIsValid() throws
+InvalidBidException {
+ Bid bid = new Bid(user1, 10);
+ bidTracker.recordUserBidOnItem(bid, item1);
+ List<Bid> actualBidListOnItem1 = bidTracker.getCurrentAuctionBoardCopy().get(item1);
+ List<Bid> expectedBidListOnItem1 = Collections.singletonList(bid);
+ assertEquals(expectedBidListOnItem1, actualBidListOnItem1);
+ }
+ public void recordUserBidOnItem_shouldAddSeveralBidsToItem_whenBidsAreValid() throws
+InvalidBidException {
+ bidTracker.recordUserBidOnItem(new Bid(user1, 10), item1);
+ bidTracker.recordUserBidOnItem(new Bid(user2, 20), item1);
+ bidTracker.recordUserBidOnItem(new Bid(user1, 30), item1);
+ List<Bid> actualBidsListOnItem1 = bidTracker.getCurrentAuctionBoardCopy().get(item1);
+ List<Bid> expectedBidsListOnItem1 = Arrays.asList(
+ new Bid(user1, 10),
+ new Bid(user2, 20),
+ new Bid(user1, 30));
+ assertEquals(expectedBidsListOnItem1, actualBidsListOnItem1);
+ }
+ public void recordUserBidOnItem_shouldThrowIllegalArgumentException_whenItemIsNull() throws
+InvalidBidException {
+ thrown.expect(IllegalArgumentException.class);
+ thrown.expectMessage("Item can't be null");
+ bidTracker.recordUserBidOnItem(new Bid(user1, 10), null);
+ }
+ public void recordUserBidOnItem_shouldThrowIllegalArgumentException_whenBidIsNull() throws
+InvalidBidException {
+ thrown.expect(IllegalArgumentException.class);
+ thrown.expectMessage("Bid can't be null");
+ bidTracker.recordUserBidOnItem(null, item1);
+ }
+ public void recordUserBidOnItem_shouldThrowIllegalArgumentException_whenUserIsNull() throws
+InvalidBidException {
+ thrown.expect(IllegalArgumentException.class);
+ thrown.expectMessage("Bid's user can't be null");
+ bidTracker.recordUserBidOnItem(new Bid(null, 10), item1);
+ }
+ public void
+recordUserBidOnItem_shouldThrowInvalidBidException_whenBidIsLowerThanCurrentlyWinningBid()
+throws InvalidBidException {
+ thrown.expect(InvalidBidException.class);
+ thrown.expectMessage("A bid of £5 on item { id: i1, name: item1, description: Brilliant! } is too
+low. It should be more than the current winning bid: £10)");
+ bidTracker.recordUserBidOnItem(new Bid(user1, 10), item1);
+ Bid lowBid = new Bid(user2, 5);
+ bidTracker.recordUserBidOnItem(lowBid, item1);
+ }
+ public void
+recordUserBidOnItem_shouldThrowInvalidBidException_whenBidIsSameAsCurrentlyWinningBid()
+throws InvalidBidException {
+ thrown.expect(InvalidBidException.class);
+ thrown.expectMessage("A bid of £10 on item { id: i1, name: item1, description: Brilliant! } is too
+low. It should be more than the current winning bid: £10)");
+ bidTracker.recordUserBidOnItem(new Bid(user1, 10), item1);
+ Bid sameBid = new Bid(user2, 10);
+ bidTracker.recordUserBidOnItem(sameBid, item1);
+ }
+ public void recordUserBidOnItem_shouldAddSeveralBidsToItem_whenSomeBidsAreInvalid() throws
+InvalidBidException {
+ bidTracker.recordUserBidOnItem(new Bid(user1, 10), item1);
+ bidTracker.recordUserBidOnItem(new Bid(user2, 20), item1);
+ try {
+ bidTracker.recordUserBidOnItem(new Bid(user3, 15), item1);
+ } catch(InvalidBidException e) { /* Silencing the exception as it is irrelevant for this test */ }
+ bidTracker.recordUserBidOnItem(new Bid(user1, 30), item1);
+ List<Bid> bidsListOnItem1 = bidTracker.getCurrentAuctionBoardCopy().get(item1);
+ List<Bid> expectedBidsOnItem1 = Arrays.asList(
+ new Bid(user1, 10),
+ new Bid(user2, 20),
+ new Bid(user1, 30));
+ assertEquals(expectedBidsOnItem1, bidsListOnItem1);
+ }
+ public void recordUserBidOnItem_shouldOnlyRecordValidBids_inAMultithreadedEnvironment() {
+ AtomicInteger invalidBidsCount = new AtomicInteger(0);
+ // Make 10000 bids on 4 different threads.
+ int totalNbBids = 10000;
+ ExecutorService executor = Executors.newFixedThreadPool(4);
+ IntStream.range(0, totalNbBids).forEach(
+ i -> executor.submit(
+ () -> {
+ try {
+ bidTracker.recordUserBidOnItem(new Bid(user1, i), item1);
+ } catch(InvalidBidException e) {
+ invalidBidsCount.incrementAndGet();
+ }
+ }
+ )
+ );
+ shutDownExecutor(executor);
+ List<Bid> actualBidsMade = bidTracker.getCurrentAuctionBoardCopy().get(item1);
+ assertEquals(totalNbBids, actualBidsMade.size() + invalidBidsCount.get());
+
+ assertEquals(actualBidsMade, sortBidListByValue(actualBidsMade));
+ Bid lastBidMade = actualBidsMade.get(actualBidsMade.size() - 1);
+ assertEquals(totalNbBids - 1, lastBidMade.getValue());
+ }
+ private void shutDownExecutor(ExecutorService executor) {
+ try {
+ executor.awaitTermination(2, TimeUnit.SECONDS);
+ } catch (InterruptedException e) {
+ System.err.println("tasks interrupted");
+ } finally {
+ executor.shutdownNow();
+ }
+ }
+ private List<Bid> sortBidListByValue(List<Bid> bidList) {
+ return bidList.stream()
+ .sorted(Comparator.comparing(Bid::getValue))
+ .collect(Collectors.toList());
+ }
+ public void getCurrentWinningBidForItem_shouldThrowIllegalArgumentException_whenItemIsNull()
+{
+ thrown.expect(IllegalArgumentException.class);
+ thrown.expectMessage("Item can't be null");
+ bidTracker.getCurrentWinningBidForItem(null);
+ }
+ public void getCurrentWinningBidForItem_shouldReturnEmptyOptional_whenItemHasNoBid() {
+ Optional<Bid> bid = bidTracker.getCurrentWinningBidForItem(item1);
+ assertEquals(Optional.empty(), bid);
+ }
+ public void getCurrentWinningBidForItem_shouldReturnOptionalWithAValue_whenItemHasBids()
+throws InvalidBidException {
+ bidTracker.recordUserBidOnItem(new Bid(user1, 10), item1);
+ bidTracker.recordUserBidOnItem(new Bid(user2, 20), item1);
+ Optional<Bid> bid = bidTracker.getCurrentWinningBidForItem(item1);
+ assertTrue(bid.isPresent());
+ assertEquals(bid.get(), new Bid(user2, 20));
+ }
+ public void getAllBidsForItem_shouldThrowIllegalArgumentException_whenItemIsNull() {
+ thrown.expect(IllegalArgumentException.class);
+ thrown.expectMessage("Item can't be null");
+ bidTracker.getAllBidsForItem(null);
+ }
+ public void getAllBidsForItem_shouldReturnEmptyList_whenItemHasNoBid() {
+ List<Bid> bids = bidTracker.getAllBidsForItem(item1);
+ assertTrue(bids.isEmpty());
+ }
+ public void getAllBidsForItem_shouldReturnTheCorrectListOfBids_whenItemHasBids() throws
+InvalidBidException {
+ bidTracker.recordUserBidOnItem(new Bid(user1, 10), item1);
+ bidTracker.recordUserBidOnItem(new Bid(user2, 20), item1);
+ List<Bid> actualBids = bidTracker.getAllBidsForItem(item1);
+ List<Bid> expectedBids = Arrays.asList(
+ new Bid(user1, 10),
+ new Bid(user2, 20));
+ assertEquals(expectedBids, actualBids);
+ }
+ public void getAllItemsWithBidFromUser_shouldReturnEmptySet_whenUserIsNull() {
+ Set<Item> items = bidTracker.getAllItemsWithBidFromUser(null);
+ assertTrue(items.isEmpty());
+ }
+ public void getAllItemsWithBidFromUser_shouldReturnEmptySet_whenUserHasNoBid() {
+ Set<Item> items = bidTracker.getAllItemsWithBidFromUser(user1);
+ assertTrue(items.isEmpty());
+ }
+ public void getAllItemsWithBidFromUser_shouldReturnCorrectItemSet_whenUserHasBids() throws
+InvalidBidException {
+ bidTracker.recordUserBidOnItem(new Bid(user1, 10), item1); // bid on item1
+ bidTracker.recordUserBidOnItem(new Bid(user2, 20), item1);
+ bidTracker.recordUserBidOnItem(new Bid(user1, 30), item1); // second bid on item1
+ bidTracker.recordUserBidOnItem(new Bid(user2, 10), item2);
+ bidTracker.recordUserBidOnItem(new Bid(user3, 20), item2);
+ bidTracker.recordUserBidOnItem(new Bid(user3, 10), item3);
+ bidTracker.recordUserBidOnItem(new Bid(user1, 20), item3); // bid on item3
+ Set<Item> itemList = bidTracker.getAllItemsWithBidFromUser(user1);
+ Set<Item> expectedItemList = new HashSet<>(Arrays.asList(item1, item3));
+ assertEquals(expectedItemList, itemList);
+ }
+}
