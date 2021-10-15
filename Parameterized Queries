@@ -20,4 +20,3 @@ window.location="./index.php";
 }
 mysqli_close($con);
 ?>
-SEVERAL CODES THAT W
