@@ -1,0 +1,23 @@
+<?php
+$con = mysqli_connect("localhost","root","","ngo") or die(mysqli_error());
+$conn = sqlsrv_connect("localhost","root","","ngo");
+$params = array($_POST['admin'], $_POST['password']);
+$sql = "SELECT * FROM admin WHERE admin = ? and password = ?";
+$result = sqlsrv_query($conn,$sql,$params);
+if(sqlsrv_has_rows($result)!= 0){
+$rs = mysqli_fetch_array($result);
+ session_start();
+$_SESSION["admin"] = $rs["admin_Id"];
+header("location:./home.php");
+}
+else{
+?>
+<script>
+alert("Invalid admin name or password.!!");
+window.location="./index.php";
+</script>
+<?php
+}
+mysqli_close($con);
+?>
+SEVERAL CODES THAT W
